@@ -9,28 +9,44 @@ Function Write-Log {
     [CmdletBinding()]
     Param(
         [Parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)][ValidateNotNullOrEmpty()][Alias("LogContent")][string]$Message,
-        [Parameter(Mandatory=$false)][ValidateSet("Error","Warn","Info")][string]$Level = "Info"
+        [Parameter(Mandatory=$false)][ValidateSet("Error","Warn","Info","Verbose","Debug")][string]$Level = "Info"
     )
 
-    Begin {
-        $VerbosePreference = 'Continue'
-    }
+    Begin { }
     Process {
         $filename = ".\Logs\MultiPoolMiner-$(Get-Date -Format "yyyy-MM-dd").txt"
         $date = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 
+        if (-not (Test-Path "Stats")) {New-Item "Stats" -ItemType "directory" | Out-Null}
+        
         switch($Level) {
             'Error' {
                 $LevelText = 'ERROR:'
-                Write-Host -ForegroundColor Red -Object "$date $LevelText $Message"
+                if($ErrorActionPreference -ne 'SilentlyContinue') {
+                    Write-Host -ForegroundColor Red -Object "$date $LevelText $Message"
+                }
             }
             'Warn' {
                 $LevelText = 'WARNING:'
-                Write-Host -ForegroundColor Yellow -Object "$date $LevelText $Message"
+                if($WarningPreference -ne 'SilentlyContinue') {
+                    Write-Host -ForegroundColor Yellow -Object "$date $LevelText $Message"
+                }
             }
             'Info' {
                 $LevelText = 'INFO:'
                 Write-Host -ForegroundColor DarkCyan -Object "$date $LevelText $Message"
+            }
+            'Verbose' {
+                $LevelText = 'VERBOSE:'
+                if($VerbosePreference -ne 'SilentlyContinue') {
+                    Write-Host -ForegroundColor Cyan -Object "$date $LevelText $Message"
+                }
+            }
+            'Debug' {
+                $LevelText = 'DEBUG:'
+                if($DebugPreference -ne 'SilentlyContinue') {
+                    Write-Host -ForegroundColor Gray -Object "$date $LevelText $Message"
+                }
             }
         }
         "$date $LevelText $Message" | Out-File -FilePath $filename -Append
@@ -134,13 +150,13 @@ function Get-Balances {
         $balances | Where-Object {
             if($_.Content.currency -eq 'BTC') {
                 ForEach($Rate in ($Rates.PSObject.Properties)) {
-                    $_ | Add-Member "Total_$($Rate.Name)" ([Double]$Rate.Value * $_.Content.total)
+                    $_.Content | Add-Member "Total_$($Rate.Name)" ([Double]$Rate.Value * $_.Content.total)
                 }
             } else {
                 # Try to get exchange rate to BTC
                 $btcvalue = Get-BTCValue -altcoin $_.Content.currency -amount $_.Content.total
                 ForEach($Rate in ($Rates.PSObject.Properties)) {
-                    $_ | Add-Member "Total_$($Rate.Name)" ([Double]$Rate.Value * $btcvalue)
+                    $_.Content | Add-Member "Total_$($Rate.Name)" ([Double]$Rate.Value * $btcvalue)
                 }
             }
         }
@@ -361,6 +377,32 @@ filter ConvertTo-Hash {
     }
 }
 
+function ConvertTo-LocalCurrency { 
+    [CmdletBinding()]
+    # To get same numbering scheme reagardless of value BTC value (size) to dermine formatting
+    # Use $Offset to add/remove decimal places
+
+    param(
+        [Parameter(Mandatory = $true)]
+        [Double]$Number, 
+        [Parameter(Mandatory = $true)]
+        [Double]$BTCRate,
+        [Parameter(Mandatory = $false)]
+        [Int]$Offset        
+    )
+
+    $Number = $Number * $BTCRate
+    
+    switch ([math]::truncate([math]::log($BTCRate, [Math]::Pow(10, 1))) -2 + $Offset) {
+        default {$Number.ToString("N0")}
+        0 {$Number.ToString("N5")}
+        1 {$Number.ToString("N4")}
+        2 {$Number.ToString("N3")}
+        3 {$Number.ToString("N2")}
+        4 {$Number.ToString("N1")}
+    }
+}
+
 function Get-Combination {
     [CmdletBinding()]
     param(
@@ -447,12 +489,17 @@ function Start-SubProcess {
         $lpProcessInformation = New-Object PROCESS_INFORMATION
 
         [Kernel32]::CreateProcess($lpApplicationName, $lpCommandLine, [ref] $lpProcessAttributes, [ref] $lpThreadAttributes, $bInheritHandles, $dwCreationFlags, $lpEnvironment, $lpCurrentDirectory, [ref] $lpStartupInfo, [ref] $lpProcessInformation)
- 
+        if($lpProcessInformation.dwProcessId -eq 0) {
+            Write-Error "Failed to launch process $FilePath $ArgumentList"
+            [PSCustomObject]@{ProcessId = $null}
+            return
+        }
+
         $Process = Get-Process -Id $lpProcessInformation.dwProcessId
 
-        if ($Process -eq $null) {
-			Write-Log -Level Error "Did not get a process handle when starting miner"
-			Write-Log -Level Error "Trying to find process " $lpProcessInformation.dwProcessId
+        if ($Process -eq $null -or $Process -eq 0) {
+			Write-Error "Did not get a process handle when starting miner"
+			Write-Error "Trying to find process " $lpProcessInformation.dwProcessId
             [PSCustomObject]@{ProcessId = $null}
             return        
         }
@@ -604,4 +651,34 @@ class Miner {
     $Activated
     $Status
     $Benchmarked
+
+    StartMining() {
+        $this.New = $true
+        $this.Activated++
+        if ($this.Process -ne $null) {$this.Active += $this.Process.ExitTime - $this.Process.StartTime}
+        $this.Process = Start-SubProcess -FilePath $this.Path -ArgumentList $this.Arguments -WorkingDirectory (Split-Path $this.Path) -Priority ($this.Type | ForEach-Object {if ($this -eq "CPU") {-2}else {-1}} | Measure-Object -Maximum | Select-Object -ExpandProperty Maximum)
+        if ($this.Process -eq $null) {
+            $this.Status = "Failed"
+            Write-Log -Level Warning "$($this.Type) miner $($this.Name) failed to start."
+        } else {
+            $this.Status = "Running"
+            Write-Log "$($this.Type) miner $($this.Name) started with PID $($this.Process.Id)"
+        }
+    }
+
+    StopMining() {
+        $this.Process.CloseMainWindow() | Out-Null
+        # Wait up to 10 seconds for the miner to close gracefully
+        $closedgracefully = $this.Process.WaitForExit(10000)
+        if($closedgracefully) { 
+            Write-Log "$($this.Type) miner $($this.Name) closed gracefully" 
+        } else {
+            Write-Log -Level Error "$($this.Type) miner $($this.Name) failed to close within 10 seconds"
+            if(!$this.Process.HasExited) {
+                Write-Log -Level Error "Attempting to kill $($this.Type) miner $($this.Name) PID $($this.Process.Id)"
+                $this.Process.Kill()
+            }
+        }
+        $this.Status = "Idle"
+    }
 }
