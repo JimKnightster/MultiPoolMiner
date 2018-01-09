@@ -1,9 +1,4 @@
-﻿Import-Module "$env:Windir\System32\WindowsPowerShell\v1.0\Modules\NetSecurity\NetSecurity.psd1" -ErrorAction Ignore
-Import-Module "$env:Windir\System32\WindowsPowerShell\v1.0\Modules\Defender\Defender.psd1" -ErrorAction Ignore
-
-Set-Location (Split-Path $MyInvocation.MyCommand.Path)
-
-Add-Type -Path .\OpenCL\*.cs
+﻿Set-Location (Split-Path $MyInvocation.MyCommand.Path)
 
 Function Write-Log {
     [CmdletBinding()]
@@ -49,120 +44,9 @@ Function Write-Log {
                 }
             }
         }
-        "$date $LevelText $Message" | Out-File -FilePath $filename -Append
+        #"$date $LevelText $Message" | Out-File -FilePath $filename -Append
     }
     End {}
-}
-
-Function Get-BittrexMarkets {
-    # Get a list of markets. This list includes both the long and short names of each currency.
-    $filename = 'Cache\BittrexMarkets.json'
-
-    # Use cached data if it's less than 1 day old
-    if(Test-Path $filename) {
-        $lastupdated = (Get-Item $filename).LastWriteTime
-        $timespan = New-TimeSpan -Days 1
-
-        if(((Get-Date) - $lastupdated) -lt $timespan) {
-            Write-Log 'Using cached market list...'
-            $markets = Get-Content $filename | ConvertFrom-Json
-            return $markets
-        }
-    } 
-
-    Write-Log 'Updating markets from API...'
-    try {
-        $Request = Invoke-RestMethod "https://bittrex.com/api/v1.1/public/getmarkets" -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
-    } catch {
-        Write-Log -Level Warn "Bittrex exchange API has failed. "
-        Return 0
-    }
-    
-    $markets = $Request.result | Where-Object {$_.BaseCurrency -eq 'BTC'}
-    Write-Log "$($markets.count) markets loaded"
-    $markets | ConvertTo-Json | Set-Content $filename
-
-    return $markets
-}
-
-function Get-BTCValue {
-    param (
-        [Parameter(Mandatory=$true)][string]$altcoin,
-        [Parameter(Mandatory=$true)][double]$amount
-
-    )
-    # This gets the exchange rate from bittrex.com for various altcoins, and returns an equivelent BTC value
-    # Exchange rates are cached to avoid abusing their API.  If the cached rates are more than 1 hour old, they will be refreshed.
-    $VerbosePreference = 'continue'
-    $filename = 'Cache\ExchangeRates.json'
-    
-    # Cache for up to 2 hours
-    $timespan = New-TimeSpan -Hour 2 
-    
-    $ExchangeRates = @{}
-    if(Test-Path $filename) {
-        $ExchangeRateData = Get-Content $filename | ConvertFrom-Json
-        # ConvertFrom-Json gives a PSObject, this turns it back into a hashtable. https://stackoverflow.com/questions/3740128/pscustomobject-to-hashtable
-        $ExchangeRateData.psobject.properties | Foreach {$ExchangeRates[$_.Name] = $_.Value}
-    }
-
-    # Try to return a cached exchange rate
-    if($ExchangeRates[$altcoin].LastUpdated -and ((Get-Date) - $ExchangeRates[$altcoin].LastUpdated) -lt $timespan) {
-        Return $amount * $ExchangeRates[$altcoin].rate
-    }
-
-    # Find the market for the coin
-    $markets = Get-BittrexMarkets | Where-Object {$_.MarketCurrencyLong -eq $altcoin}
-    if($markets.count -eq 0) {
-        Write-Log -Level Info "No market found for $altcoin, unable to get exchange rate"
-        Return 0
-    }
-
-    # Get the exchange rate
-    Write-Log "Updating exchange rate for $altcoin"
-    try {
-        $Request = Invoke-RestMethod "https://bittrex.com/api/v1.1/public/getticker?market=$($markets[0].MarketName)" -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
-    } catch {
-        Write-Log -Level Warn "Bittrex exchange API has failed."
-        Return 0
-    }
-    
-    # Write the exchange rate to the cache
-    $ExchangeRates[$altcoin] = @{'rate' = $Request.result.Last; 'lastupdated' = (Get-Date).ToUniversalTime()}
-    $ExchangeRates | ConvertTo-Json | Set-Content $filename
-
-    Return $ExchangeRates[$altcoin].rate * $amount
-}
-
-
-function Get-Balances {
-    [CmdletBinding()]
-    param(
-        [String]$Wallet,
-        [String]$API_Key, # for miningpoolhub
-        $Rates
-    )
-    Write-Log 'Getting balances...'
-    $balances = Get-ChildItemContent Balances -Parameters @{Wallet = $Wallet; API_Key = $API_Key}
-    
-    # Add the local currency rates if available
-    if($Rates) {
-        $balances | Where-Object {
-            if($_.Content.currency -eq 'BTC') {
-                ForEach($Rate in ($Rates.PSObject.Properties)) {
-                    $_.Content | Add-Member "Total_$($Rate.Name)" ([Double]$Rate.Value * $_.Content.total)
-                }
-            } else {
-                # Try to get exchange rate to BTC
-                $btcvalue = Get-BTCValue -altcoin $_.Content.currency -amount $_.Content.total
-                ForEach($Rate in ($Rates.PSObject.Properties)) {
-                    $_.Content | Add-Member "Total_$($Rate.Name)" ([Double]$Rate.Value * $btcvalue)
-                }
-            }
-        }
-    }
-
-    $balances
 }
 
 function Set-Stat {
@@ -377,65 +261,6 @@ filter ConvertTo-Hash {
     }
 }
 
-function ConvertTo-LocalCurrency { 
-    [CmdletBinding()]
-    # To get same numbering scheme reagardless of value BTC value (size) to dermine formatting
-    # Use $Offset to add/remove decimal places
-
-    param(
-        [Parameter(Mandatory = $true)]
-        [Double]$Number, 
-        [Parameter(Mandatory = $true)]
-        [Double]$BTCRate,
-        [Parameter(Mandatory = $false)]
-        [Int]$Offset        
-    )
-
-    $Number = $Number * $BTCRate
-    
-    switch ([math]::truncate([math]::log($BTCRate, [Math]::Pow(10, 1))) -2 + $Offset) {
-        default {$Number.ToString("N0")}
-        0 {$Number.ToString("N5")}
-        1 {$Number.ToString("N4")}
-        2 {$Number.ToString("N3")}
-        3 {$Number.ToString("N2")}
-        4 {$Number.ToString("N1")}
-    }
-}
-
-function Get-Combination {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)]
-        [Array]$Value, 
-        [Parameter(Mandatory = $false)]
-        [Int]$SizeMax = $Value.Count, 
-        [Parameter(Mandatory = $false)]
-        [Int]$SizeMin = 1
-    )
-
-    $Combination = [PSCustomObject]@{}
-
-    for ($i = 0; $i -lt $Value.Count; $i++) {
-        $Combination | Add-Member @{[Math]::Pow(2, $i) = $Value[$i]}
-    }
-
-    $Combination_Keys = $Combination | Get-Member -MemberType NoteProperty | Select-Object -ExpandProperty Name
-
-    for ($i = $SizeMin; $i -le $SizeMax; $i++) {
-        $x = [Math]::Pow(2, $i) - 1
-
-        while ($x -le [Math]::Pow(2, $Value.Count) - 1) {
-            [PSCustomObject]@{Combination = $Combination_Keys | Where-Object {$_ -band $x} | ForEach-Object {$Combination.$_}}
-            $smallest = ($x -band - $x)
-            $ripple = $x + $smallest
-            $new_smallest = ($ripple -band - $ripple)
-            $ones = (($new_smallest / $smallest) -shr 1) - 1
-            $x = $ripple -bor $ones
-        }
-    }
-}
-
 function Start-SubProcess {
     [CmdletBinding()]
     param(
@@ -521,43 +346,6 @@ function Start-SubProcess {
     $Process
 
     if ($Process) {$Process.PriorityClass = $PriorityNames.$Priority}
-}
-
-function Expand-WebRequest {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)]
-        [String]$Uri, 
-        [Parameter(Mandatory = $false)]
-        [String]$Path = ""
-    )
-
-    if (-not $Path) {$Path = Join-Path ".\Downloads" ([IO.FileInfo](Split-Path $Uri -Leaf)).BaseName}
-    if (-not (Test-Path ".\Downloads")) {New-Item "Downloads" -ItemType "directory" | Out-Null}
-    $FileName = Join-Path ".\Downloads" (Split-Path $Uri -Leaf)
-
-    if (Test-Path $FileName) {Remove-Item $FileName}
-    Invoke-WebRequest $Uri -OutFile $FileName -UseBasicParsing
-
-    if (".msi", ".exe" -contains ([IO.FileInfo](Split-Path $Uri -Leaf)).Extension) {
-        Start-Process $FileName "-qb" -Wait
-    }
-    else {
-        $Path_Old = (Join-Path (Split-Path $Path) ([IO.FileInfo](Split-Path $Uri -Leaf)).BaseName)
-        $Path_New = (Join-Path (Split-Path $Path) (Split-Path $Path -Leaf))
-
-        if (Test-Path $Path_Old) {Remove-Item $Path_Old -Recurse}
-        Start-Process "7z" "x `"$([IO.Path]::GetFullPath($FileName))`" -o`"$([IO.Path]::GetFullPath($Path_Old))`" -y -spe" -Wait
-
-        if (Test-Path $Path_New) {Remove-Item $Path_New -Recurse}
-        if (Get-ChildItem $Path_Old | Where-Object PSIsContainer -EQ $false) {
-            Rename-Item $Path_Old (Split-Path $Path -Leaf)
-        }
-        else {
-            Get-ChildItem $Path_Old | Where-Object PSIsContainer -EQ $true | ForEach-Object {Move-Item (Join-Path $Path_Old $_) $Path_New}
-            Remove-Item $Path_Old
-        }
-    }
 }
 
 function Invoke-TcpRequest {
