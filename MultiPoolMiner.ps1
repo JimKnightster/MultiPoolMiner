@@ -18,7 +18,7 @@ $Algorithm = $Algorithm | ForEach-Object {Get-Algorithm $_}
 $ExcludeAlgorithm = $ExcludeAlgorithm | ForEach-Object {Get-Algorithm $_}
 $Region = $Region | ForEach-Object {Get-Region $_}
 
-$TotalThreads = (gwmi win32_processor).numberoflogicalprocessors
+$TotalThreads = ((gwmi win32_processor).numberoflogicalprocessors | Measure-Object -Sum).Sum
 $MaxThreads = $TotalThreads
 if($ReserveThreads) {
 	$MaxThreads = $TotalThreads - $ReserveThreads
