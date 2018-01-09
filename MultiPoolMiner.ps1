@@ -371,7 +371,7 @@ while ($true) {
         }
     }
 
-    if ($MinerStatusURL) {& .\ReportStatus.ps1 -Address $WalletBackup -WorkerName $WorkerNameBackup -ActiveMiners $ActiveMiners -Miners $Miners -MinerStatusURL $MinerStatusURL}
+    if ($MinerStatusURL) {& .\ReportStatus.ps1 -Address $Wallet -WorkerName $WorkerName -ActiveMiners $ActiveMiners -Miners $Miners -MinerStatusURL $MinerStatusURL}
 
     #Display mining information
     $Miners | Sort-Object -Descending Type, Profit_Bias | Format-Table (
