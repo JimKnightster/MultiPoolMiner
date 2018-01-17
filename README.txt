@@ -7,13 +7,17 @@
  |_|  |_|\__,_|_|\__|_|_|   \___/ \___/|_|_|  |_|_|_| |_|\___|_|   
  
 ====================================================================
+
 MultiPoolMiner - created by aaronsace 
-LINK: https://multipoolminer.io
+WEBSITE: https://multipoolminer.io
+GITHUB: https://github.com/MultiPoolMiner/MultiPoolMiner/releases
+REDDIT: https://www.reddit.com/r/multipoolminer/
+TWITTER: @multipoolminer 
 
 Licensed under the GNU General Public License v3.0
 Permissions of this strong copyleft license are conditioned on making available complete source code of licensed works and modifications, which include larger works using a licensed work, under the same license. Copyright and license notices must be preserved. Contributors provide an express grant of patent rights. https://github.com/MultiPoolMiner/MultiPoolMiner/blob/master/LICENSE
 
-README.txt - updated on 11/01/2018 (dd/mm/yyyy) - v1.22.2 - latest version can be found here: https://github.com/MultiPoolMiner/MultiPoolMiner/blob/master/README.txt
+README.txt - updated on 16/01/2018 (dd/mm/yyyy) - v1.22.6 - latest version can be found here: https://github.com/MultiPoolMiner/MultiPoolMiner/blob/master/README.txt
 
 ====================================================================
 
@@ -41,7 +45,8 @@ INSTALLATION:
 6. Save and close the Start.bat file you just edited.
 7. Launch the Start.bat file you just edited.
 8. Let the benchmarking finish (you will be earning shares even during benchmarking).
-9. Done. You are all set to mine the most profitable coins and maximise your profits using MultiPoolMiner.
+
+Done. You are all set to mine the most profitable coins and maximise your profits using MultiPoolMiner.
 
 
 ====================================================================
@@ -141,7 +146,10 @@ COMMAND LINE OPTIONS (case-insensitive - except for BTC addresses, see Sample Us
 	- Stage 2: when 2 timers expire relating to one miner file, the one miner file is kicked
 	- Stage 3: when 3 timers expire relating to one pool, the pool is kicked
 	Watchdog timers reset after three times the number of seconds it takes to get to stage 3.
-	
+
+-minerstatusurl https://multipoolminer.io/monitor/miner.php
+	Report and monitor your mining rig's status by including the command above. Wallet address must be set even if you are only using MiningPoolHub as a pool. You can access the reported information by entering your wallet address on the https://multipoolminer.io/monitor web address. By using this service you understand and accept the terms and conditions detailed in this document (further below). 
+
 -switchingprevention
 	Since version 2.6, the delta value (integer) that was used to determine how often MultiPoolMiner is allowed to switch, is now user-configurable on a scale of 1 to infinity on an intensity basis. Default is 1 (Start.bat default is 2). Recommended values are 1-10 where 1 means the most frequent switching and 10 means the least switching. Please note setting this value to zero (0) will not turn this function off! Please see further explanation in MULTIPOOLMINER'S LOGIC section below. 
 	
@@ -160,11 +168,11 @@ setx GPU_USE_SYNC_OBJECTS 1
 setx GPU_MAX_ALLOC_PERCENT 100
 setx GPU_SINGLE_ALLOC_PERCENT 100
 
-set "command=& .\multipoolminer.ps1 -wallet 1Q24z7gHPDbedkaWDTFqhMF8g7iHMehsCb -username aaronsace -workername multipoolminer -region europe -currency btc,usd,eur -type amd,nvidia,cpu -poolname miningpoolhub,miningpoolhubcoins,zpool,nicehash -algorithm cryptonight,decred,decrednicehash,ethash,ethash2gb,equihash,groestl,lbry,lyra2re2,lyra2z,neoscrypt,pascal,sia,siaclaymore,sianicehash,sib,skunk -donate 24 -watchdog -switchingprevention 2"
+set "command=& .\multipoolminer.ps1 -wallet 1Q24z7gHPDbedkaWDTFqhMF8g7iHMehsCb -username aaronsace -workername multipoolminer -region europe -currency btc,usd,eur -type amd,nvidia,cpu -poolname miningpoolhub,miningpoolhubcoins,zpool,nicehash -algorithm cryptonight,decred,decrednicehash,ethash,ethash2gb,equihash,groestl,lbry,lyra2re2,lyra2z,neoscrypt,pascal,sia,siaclaymore,sianicehash,sib,skunk -donate 24 -watchdog -minerstatusurl https://multipoolminer.io/monitor/miner.php -switchingprevention 2"
 
 pwsh -noexit -executionpolicy bypass -windowstyle maximized -command "%command%"
 powershell -version 5.0 -noexit -executionpolicy bypass -windowstyle maximized -command "%command%"
-msiexec -i https://github.com/PowerShell/PowerShell/releases/download/v6.0.0-rc.2/PowerShell-6.0.0-rc.2-win-x64.msi -qb!
+msiexec -i https://github.com/PowerShell/PowerShell/releases/download/v6.0.0/PowerShell-6.0.0-win-x64.msi -qb!
 pwsh -noexit -executionpolicy bypass -windowstyle maximized -command "%command%"
 
 pause
@@ -323,4 +331,26 @@ A21. MultiPoolMiner is open-source and used by many users/rigs. It also download
 Q22. How to disable dual-mining?
 A22. Make sure NOT to include any of the the following parameters in your start.bat after -algorithm or add them after the -ExludeAlgorithm command:
 	sia, decred, pascal, siaclaymore, sianicehash, decrednicehash
+
+
+====================================================================
+
+REPORTING AND MONITORING TERMS AND CONDITIONS & PRIVACY POLICY:
+
+By enabling the Monitoring Service by setting the -MinerStatusURL to point to https://multipoolminer.io/monitor/miner.php as described in the Command Line Options section, you agree that the https://multipoolminer.io website can store relevant information about your mining rig(s) in its database that is directly accessible by anyone accessing the https://multipoolminer.io/monitor webpage with the corresponding wallet address (your BTC address set with the -wallet command). The following data is stored for each mining machine (rig) and overwritten in the database in each script-cycle determined by the -interval command:
+
+BTC address: all data is stored under and identified by the Bitcoin address set with the -wallet command
+WorkerName: the name of the worker you set using the -workername command, also used for sorting
+MinerName: the current miner software the worker is running
+Type: device type set using the -type command, also used for sorting
+Pool: current pool(s) the worker is mining on
+Path: the miner application's path starting from /Bin as root. We will not store other user data!
+Active: time the worker has been active for
+Algorithm: the current algorithm the worker is running
+Current Speed: reported hashrate from the miner
+Benchmark Speed: benchmarked hashrate for the current algorithm running
+PID: process ID of the miner application being used
+BTC/day: Estimated Bitcoin earnings per day
+
+The monitoring service can change, evolve, be unavailable any time without prior notice. The contents of the database will NOT be shared with any third-parties but we reserve the right to create metrics out of it and use its contents to improve or promote our services and MultiPoolMiner. Credits to @grantemsley for the codebase.
 
