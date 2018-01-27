@@ -327,7 +327,8 @@ function Get-ChildItemContent {
         }
         elseif ($Expression -is [PSCustomObject]) {
             $Expression | Get-Member -MemberType NoteProperty | Select-Object -ExpandProperty Name | ForEach-Object {
-                $Expression.$_ = Invoke-ExpressionRecursive $Expression.$_}
+                $Expression.$_ = Invoke-ExpressionRecursive $Expression.$_
+            }
         }
         return $Expression
     }
@@ -388,7 +389,7 @@ function ConvertTo-LocalCurrency {
     )
 
     $Number = $Number * $BTCRate
-    
+
     switch ([math]::truncate(10 - $Offset - [math]::log($BTCRate, [Math]::Pow(10, 1)))) {
         0 {$Number.ToString("N0")}
         1 {$Number.ToString("N1")}

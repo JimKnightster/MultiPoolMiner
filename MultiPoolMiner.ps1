@@ -1,5 +1,64 @@
 ﻿using module .\Include.psm1
 
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory = $false)]
+    [Alias("BTC")]
+    [String]$Wallet, 
+    [Parameter(Mandatory = $false)]
+    [Alias("User")]
+    [String]$UserName, 
+    [Parameter(Mandatory = $false)]
+    [Alias("Worker")]
+    [String]$WorkerName = "multipoolminer", 
+    [Parameter(Mandatory = $false)]
+    [Int]$API_ID = 0, 
+    [Parameter(Mandatory = $false)]
+    [String]$API_Key = "", 
+    [Parameter(Mandatory = $false)]
+    [Int]$Interval = 60, #seconds before reading hash rate from miners
+    [Parameter(Mandatory = $false)]
+    [Alias("Location")]
+    [String]$Region = "europe", #europe/us/asia
+    [Parameter(Mandatory = $false)]
+    [Switch]$SSL = $false, 
+    [Parameter(Mandatory = $false)]
+    [Array]$Type = @(), #AMD/NVIDIA/CPU
+    [Parameter(Mandatory = $false)]
+    [Array]$Algorithm = @(), #i.e. Ethash,Equihash,CryptoNight etc.
+    [Parameter(Mandatory = $false)]
+    [Alias("Miner")]
+    [Array]$MinerName = @(), 
+    [Parameter(Mandatory = $false)]
+    [Alias("Pool")]
+    [Array]$PoolName = @(), 
+    [Parameter(Mandatory = $false)]
+    [Array]$ExcludeAlgorithm = @(), #i.e. Ethash,Equihash,CryptoNight etc.
+    [Parameter(Mandatory = $false)]
+    [Alias("ExcludeMiner")]
+    [Array]$ExcludeMinerName = @(), 
+    [Parameter(Mandatory = $false)]
+    [Alias("ExcludePool")]
+    [Array]$ExcludePoolName = @(), 
+    [Parameter(Mandatory = $false)]
+    [Array]$Currency = ("BTC", "USD"), #i.e. GBP,EUR,ZEC,ETH etc.
+    [Parameter(Mandatory = $false)]
+    [Int]$Donate = 24, #Minutes per Day
+    [Parameter(Mandatory = $false)]
+    [String]$Proxy = "", #i.e http://192.0.0.1:8080
+    [Parameter(Mandatory = $false)]
+    [Int]$Delay = 0, #seconds before opening each miner
+    [Parameter(Mandatory = $false)]
+    [Switch]$Watchdog = $false,
+    [Parameter(Mandatory = $false)]
+    [Alias("Uri", "Url")]
+    [String]$MinerStatusUrl = "https://multipoolminer.io/monitor/miner.php",
+    [Parameter(Mandatory = $false)]
+    [String]$MinerStatusKey = "",
+    [Parameter(Mandatory = $false)]
+    [Double]$SwitchingPrevention = 1 #zero does not prevent miners switching
+)
+
 Set-Location (Split-Path $MyInvocation.MyCommand.Path)
 
 # Get all configuration from Config.ps1
@@ -43,6 +102,9 @@ if (-not (Test-Path "Data")) {New-Item "Data" -ItemType "directory" | Out-Null}
 #Start the log
 Start-Transcript ".\Logs\$(Get-Date -Format "yyyy-MM-dd_HH-mm-ss").txt"
 
+#Set process priority to BelowNormal to avoid hash rate drops on systems with weak CPUs
+(Get-Process -Id $Global:PID).priorityclass = "BelowNormal"
+
 if (Get-Command "Unblock-File" -ErrorAction SilentlyContinue) {Get-ChildItem . -Recurse | Unblock-File}
 if ((Get-Command "Get-MpPreference" -ErrorAction SilentlyContinue) -and (Get-MpComputerStatus -ErrorAction SilentlyContinue) -and (Get-MpPreference).ExclusionPath -notcontains (Convert-Path .)) {
     Start-Process (@{desktop = "powershell"; core = "pwsh"}.$PSEdition) "-Command Import-Module '$env:Windir\System32\WindowsPowerShell\v1.0\Modules\Defender\Defender.psd1'; Add-MpPreference -ExclusionPath '$(Convert-Path .)'" -Verb runAs
@@ -79,6 +141,7 @@ while ($true) {
             Delay               = $Delay
             Watchdog            = $Watchdog
             MinerStatusURL      = $MinerStatusURL
+            MinerStatusKey      = $MinerStatusKey
             SwitchingPrevention = $SwitchingPrevention
         } | Select-Object -ExpandProperty Content
     }
@@ -102,9 +165,14 @@ while ($true) {
             Delay               = $Delay
             Watchdog            = $Watchdog
             MinerStatusURL      = $MinerStatusURL
+            MinerStatusKey      = $MinerStatusKey
             SwitchingPrevention = $SwitchingPrevention
         }
     }
+
+    # For backwards compatibility, set the MinerStatusKey to $Wallet if it's not specified
+    if ($Wallet -and -not $Config.MinerStatusKey) { $Config.MinerStatusKey = $Wallet }
+
     Get-ChildItem "Pools" | Where-Object {-not $Config.Pools.($_.BaseName)} | ForEach-Object {
         $Config.Pools | Add-Member $_.BaseName (
             [PSCustomObject]@{
@@ -557,7 +625,7 @@ while ($true) {
         }
     }
 
-    if ($Config.MinerStatusURL) {& .\ReportStatus.ps1 -Address $Wallet -WorkerName $WorkerName -ActiveMiners $ActiveMiners -Miners $Miners -MinerStatusURL $Config.MinerStatusURL}
+    if ($Config.MinerStatusURL -and $Config.MinerStatusKey) {& .\ReportStatus.ps1 -Key $Config.MinerStatusKey -WorkerName $WorkerName -ActiveMiners $ActiveMiners -Miners $Miners -MinerStatusURL $Config.MinerStatusURL}
 
     #Display mining information
     $Miners | Where-Object {$_.Profit -ge 1E-5 -or $_.Profit -eq $null} | Sort-Object -Descending Type, Profit_Bias | Format-Table -GroupBy Type (
@@ -634,7 +702,7 @@ while ($true) {
     [GC]::Collect()
 
     #Do nothing for a few seconds as to not overload the APIs and display miner download status
-    Write-Log "Waiting for $Config.Interval seconds to start next run"
+    Write-Log "Waiting for $($Config.Interval) seconds to start next run"
     for ($i = $Strikes; $i -gt 0 -or $Timer -lt $StatEnd; $i--) {
         if ($Downloader) {$Downloader | Receive-Job}
         Start-Sleep 10
@@ -646,16 +714,16 @@ while ($true) {
     $ActiveMiners | ForEach-Object {
         $Miner = $_
         $Miner.Speed_Live = 0
-        $Miner_HashRate = [PSCustomObject]@{}
+        $Miner_Data = [PSCustomObject]@{}
 
         if ($Miner.New) {$Miner.Benchmarked++}
 
         if ($Miner.Process -and -not $Miner.Process.HasExited) {
-            $Miner_HashRate = $Miner.GetHashRate($Miner.Algorithm, ($Miner.New -and $Miner.Benchmarked -lt $Strikes))
-            $Miner.Speed_Live = $Miner_HashRate.PSObject.Properties.Value
+            $Miner_Data = $Miner.GetMinerData($Miner.Algorithm, ($Miner.New -and $Miner.Benchmarked -lt $Strikes))
+            $Miner.Speed_Live = $Miner_Data.HashRate.PSObject.Properties.Value
 
-            $Miner.Algorithm | Where-Object {$Miner_HashRate.$_} | ForEach-Object {
-                $Stat = Set-Stat -Name "$($Miner.Name)_$($_)_HashRate" -Value $Miner_HashRate.$_ -Duration $StatSpan -FaultDetection $true
+            $Miner.Algorithm | Where-Object {$Miner_Data.HashRate.$_} | ForEach-Object {
+                $Stat = Set-Stat -Name "$($Miner.Name)_$($_)_HashRate" -Value $Miner_Data.HashRate.$_ -Duration $StatSpan -FaultDetection $true
 
                 #Update watchdog timer
                 $Miner_Name = $Miner.Name
